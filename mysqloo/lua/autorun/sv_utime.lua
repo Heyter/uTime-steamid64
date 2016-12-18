@@ -3,7 +3,7 @@
 -- Modified by MRDRMUFN for gm_mysqloo support
 -- Modified by TweaK for more reliable operation
 -- Modified by xbeastguyx for uploading current data to MySQL and changing data storage method.
--- Modified by Hikka for autoreplace UniqueID in SteamID64 [18.12.2016]
+-- Modified by Hikka replace UniqueID in SteamID64; Add utime_settime command [19.12.2016]
  
 if !SERVER then return end
  
@@ -81,34 +81,17 @@ db:connect()
 -- Check that the table exists, create it if not
 table.insert( queue, { "SHOW TABLES LIKE 'utime'", function( data )
     if table.Count( data ) < 1 then -- the table doesn't exist
-        query( "CREATE TABLE IF NOT EXISTS utime (player BIGINT(20) NOT NULL PRIMARY KEY, totaltime INTEGER NOT NULL, lastvisit INTEGER NOT NULL)", function( data )
+        query( "CREATE TABLE IF NOT EXISTS utime (id INTEGER NOT NULL AUTO_INCREMENT, player BIGINT(20) NOT NULL, totaltime INTEGER NOT NULL, lastvisit INTEGER NOT NULL, PRIMARY KEY (id))", function( data )
             CMP( "Sucessfully created table!" )
         end )
     end
 end } )
-
-function PlayerAuthJoined( ply, steamid, uniqueid )
-    local uid = ply:UniqueID()
-    query( "SELECT player, totaltime, lastvisit FROM utime WHERE player = " .. uid .. " LIMIT 1;", function( uidData )
-        local time = 0
-        if table.Count( uidData ) != 0 then
-            uidRow = uidData[ 1 ]
-            time = uidRow.totaltime
-            query( "UPDATE utime SET lastvisit = " ..os.time().. ", player = "..ply:SteamID64().." WHERE player = " ..uid, function() end )
-        end
-
-        ply:SetUTime( time )
-        ply:SetUTimeStart( CurTime() )
-        ply.UTimeLoaded = true
-    end)
-end
-
-hook.Add("PlayerAuthed", "playerstats.auth1", PlayerAuthJoined)
  
 function PlayerJoined( ply )
     local sid = ply:SteamID64()
    
-    query( "SELECT totaltime, lastvisit FROM utime WHERE player = " .. sid .. " LIMIT 1;", function( sidData )
+    query( "SELECT totaltime, lastvisit FROM utime WHERE player = " .. sid, function( sidData )
+        local time = 0
 
         if table.Count( sidData ) != 0 then -- player exists
             sidRow = sidData[ 1 ]
@@ -117,6 +100,7 @@ function PlayerJoined( ply )
             end
 
             query( "UPDATE utime SET lastvisit = " .. os.time() .. " WHERE player = " .. sid, function() end )
+            time = sidRow.totaltime
         else -- player does not exist
             if utime_welcome:GetBool() then
                 ULib.tsay( ply, "Добро пожаловать на наш сервер " .. ply:Nick() .. "!" )
@@ -128,7 +112,7 @@ function PlayerJoined( ply )
                 function() print( "Вас занесли в базу данных нашего сервера " .. ply:Nick() .. "." ) end )
         end
 
-		ply:SetUTime( sidRow.totaltime )
+		ply:SetUTime( time )
 		ply:SetUTimeStart( CurTime() )
 		ply.UTimeLoaded = true
     end)
@@ -141,8 +125,8 @@ end
 hook.Add( "PlayerDisconnected", "UTimeDisconnect", UpdatePlayer )
  
 function UpdateAll()
-    for _, ply in pairs( player.GetAll() ) do
-        if IsValid( ply ) and ply:IsConnected() and ply.UTimeLoaded then
+    for _, ply in ipairs( player.GetAll() ) do
+        if IsValid( ply ) && ply:IsConnected() && ply.UTimeLoaded then
             UpdatePlayer( ply )
         end
     end
@@ -209,3 +193,50 @@ concommand.Add( "utime_cleardb", function( ply )	-- очистить всю ба
     query:start()
     CMP( "Sucessfully cleared the table!" )
 end )
+
+concommand.Add("utime_id", function(ply)
+    if (!IsValid(ply)) then return end
+    ply:PrintMessage(3, "[ "..ply:Nick().." ] | UniqueID: "..ply:UniqueID().."| SteamID64: "..ply:SteamID64())
+end)
+
+concommand.Add("utime_settime", function(ply,cmd,args)
+    if (!ply:IsSuperAdmin()) then
+        ply:PrintMessage(3, "Вы не можете использовать эту команду!")
+        return
+    end
+
+    if (!tonumber(args[2])) then
+        ply:PrintMessage(3, "Используйте: utime_settime 'steamid64' 'time'")
+        return
+    end
+
+    local steamid = args[1]
+    local amount = tonumber(args[2])
+
+    if (amount < 0) then
+        ply:PrintMessage(3, "Сумма не должна быть меньше нуля!")
+        return
+    end
+
+    for _, ent in ipairs(player.GetAll()) do
+        if (IsValid(ent) && ent:IsConnected() && ent:SteamID64() == steamid) then
+            ent:SetUTime( amount )
+            ent:SetUTimeStart( CurTime() )
+        end
+        continue
+    end
+
+    query( "SELECT * FROM utime WHERE player = " .. steamid, function( result )
+
+        if table.Count( result ) != 0 then -- player exists
+            print(steamid)
+            query( "UPDATE utime SET totaltime = " .. amount ..", lastvisit = " ..os.time().. " WHERE player = " .. steamid .. ";", function() end )
+            ply:PrintMessage(3, "Вы установили "..amount.." часов > [ "..steamid.." ]")
+            return
+        else 
+            print(steamid)
+            ply:PrintMessage(3, "SteamID64 не найден в базе данных!")
+            return
+        end
+    end)
+end)
